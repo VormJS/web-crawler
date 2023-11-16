@@ -5,7 +5,7 @@ import { Button, Card, CardContent, CardHeader, Stack, Table, TableBody, TableCe
 
 import styles from './page.module.css'
 
-import io from 'socket.io-client';
+import io from 'socket.io-client'
 
 const formatDateTime = (timeStamp: string) => Intl.DateTimeFormat('default', {
   year: 'numeric',
@@ -36,17 +36,39 @@ export default function Home() {
   const [urlInput, setUrlInput] = useState('')
   const [urlInputError, setUrlInputError] = useState('')
 
+  const [searchInProgress, setSearchInProgress] = useState(false)
+  const [paused, setPaused] = useState(false)
+
   const [records, setRecords] = useState<Array<PageResult>>([])
 
   const startCrawling = useCallback(() => {
-    socket.emit('start_crawl', urlInput);
+    setSearchInProgress(true)
+    socket.emit('start_crawl', urlInput)
   }, [urlInput])
 
+  const pause = useCallback(() => {
+    if (paused) {
+      setPaused(false)
+      socket.emit('resume')
+    } else {
+      setPaused(true)
+      socket.emit('pause')
+    }
+  }, [paused])
+
+  const clear = useCallback(() => {
+    setSearchInProgress(false)
+    setPaused(false)
+    setRecords([])
+    setUrlInput('')
+    socket.emit('stop')
+  }, [])
+
   useEffect(() => {
-    socket.on('start_crawl', (data) => {
-      setRecords((prevRecords) => [...prevRecords, data]);
-    });
-  }, []);
+    socket.on('send_record', (data) => {
+      setRecords((prevRecords) => [...prevRecords, data])
+    })
+  }, [])
 
   return (
     <main className={styles.main}>
@@ -73,16 +95,33 @@ export default function Home() {
               }}
             />
 
-            <Button
-              variant='outlined'
-              disabled={!!urlInputError}
-              onClick={startCrawling}
-            >Go</Button>
+            {searchInProgress ? (
+              <Stack direction='row' gap={4}>
+                <Button
+                  variant='outlined'
+                  fullWidth
+                  onClick={pause}
+                >{paused ? 'Resume' : 'Pause'}</Button>
+
+                <Button
+                  variant='contained'
+                  color='primary'
+                  fullWidth
+                  onClick={clear}
+                >Clear</Button>
+              </Stack>
+            ) : (
+              <Button
+                variant='outlined'
+                disabled={!urlInput || !!urlInputError}
+                onClick={startCrawling}
+              >Go</Button>
+            )}
           </Stack>
         </CardContent>
       </Card>
 
-      <Stack gap={4} width='100%' mt={4} overflow={['scroll', 'unset']}>
+      <Stack gap={3} width='100%' mt={4} sx={{ overflowY: 'scroll' }} flexGrow={1}>
         {records.map((record, index) => (
           <Card key={index} sx={{ flexShrink: 0 }}>
             <CardHeader

@@ -13,25 +13,41 @@ const io = new Server(server, {
   }
 })
 
+const CONCURRENCY_LIMIT = 10
+
 const httpRegExp = /^http[s]?:\/\//
 const slashAtEndRegExp = /\/$/
 const linkCleanupSymbolsRegExp = /[\?|\#]/
 
 const jsLinks = [
+  'javascript:void(0);',
   'javascript:void(0)',
   'about:blank',
 ]
 
 const KnownLinks = new Set()
 const LinksToExplore = new Set()
+const LinksQueue = new Set()
 
-io.on('connection', (socket) => {
-  console.log('A user connected')
+let paused = false
+let stopped = false
 
-  socket.on('start_crawl', async (message) => {
-    KnownLinks.add(message)
-    const res = await fetch(message)
+let requestCounter = 0
+
+const inspectURL = async (url) => {
+  if (!KnownLinks.has(url)) {
+    LinksQueue.add(url)
+    LinksToExplore.delete(url)
+
+    const res = await fetch(url)
     const html = await res.text()
+
+    console.warn('request made times: ' + requestCounter++)
+
+    if (!stopped) {
+      KnownLinks.add(url)
+      LinksQueue.delete(url)
+    }
 
     const dom = new JSDOM(html)
 
@@ -40,6 +56,7 @@ io.on('connection', (socket) => {
     const links = document.querySelectorAll('a')
     const linksData = [...links].reduce((list, link) => {
       const linkAddress = link.href
+
       if (linkAddress) {
         const indexOfCleaning = linkAddress.search(linkCleanupSymbolsRegExp)
         const linkAddressClean = (indexOfCleaning === -1
@@ -53,14 +70,15 @@ io.on('connection', (socket) => {
         })
 
         if (!jsLinks.includes(linkAddressClean)) {
-          const linkWithOutDomain =  !httpRegExp.test(linkAddressClean)
+          const linkWithOutDomain = !httpRegExp.test(linkAddressClean)
           const fullLink = (linkWithOutDomain
-            ? message.split('/').slice(0, 3).join('/') + linkAddressClean
+            ? url.split('/').slice(0, 3).join('/') + linkAddressClean
             : linkAddressClean
           )
           if (
             !KnownLinks.has(fullLink)
             && !LinksToExplore.has(fullLink)
+            && !stopped
           ) {
             LinksToExplore.add(fullLink)
           }
@@ -70,15 +88,57 @@ io.on('connection', (socket) => {
       return list
     }, [])
 
-    const result = {
-      url: message,
-      timeStamp: new Date().toISOString(),
-      links: linksData,
+    if (!stopped) {
+      io.emit('send_record', {
+        url: url,
+        timeStamp: new Date().toISOString(),
+        links: linksData,
+      })
     }
+  } else {
+    LinksQueue.delete(url)
+    LinksToExplore.delete(url)
+  }
 
-    console.warn([...KnownLinks])
-    console.warn([...LinksToExplore])
-    io.emit('start_crawl', result)
+  checkQueue()
+}
+
+const checkQueue = async () => {
+  console.warn('paused: ' + paused)
+  if (LinksToExplore.size && LinksQueue.size < CONCURRENCY_LIMIT && !paused && !stopped) {
+    const nextURL = LinksToExplore.values().next().value
+    inspectURL(nextURL)
+    checkQueue()
+  } else if (!LinksToExplore.size) {
+    console.log('Request queue is empty')
+  }
+}
+
+io.on('connection', (socket) => {
+  console.log('A user connected')
+
+  socket.on('start_crawl', async (message) => {
+    stopped = false
+    paused = false
+    inspectURL(message)
+  })
+
+  socket.on('pause', () => {
+    paused = true
+  })
+
+  socket.on('resume', () => {
+    paused = false
+    checkQueue()
+  })
+
+  socket.on('stop', () => {
+    requestCounter = 0
+    stopped = true
+    paused = true
+    KnownLinks.clear()
+    LinksToExplore.clear()
+    LinksQueue.clear()
   })
 
   socket.on('disconnect', () => {
