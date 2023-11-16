@@ -13,8 +13,9 @@ const io = new Server(server, {
   }
 })
 
-const linkCleanupSymbolsRegExp = /[\?|\#]/
 const httpRegExp = /^http[s]?:\/\//
+const slashAtEndRegExp = /\/$/
+const linkCleanupSymbolsRegExp = /[\?|\#]/
 
 const jsLinks = [
   'javascript:void(0)',
@@ -44,7 +45,7 @@ io.on('connection', (socket) => {
         const linkAddressClean = (indexOfCleaning === -1
           ? linkAddress
           : linkAddress.slice(0, indexOfCleaning)
-        )
+        ).replace(slashAtEndRegExp, '')
 
         list.push({
           url: linkAddressClean,
