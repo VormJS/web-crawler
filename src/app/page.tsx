@@ -1,95 +1,93 @@
-import Image from 'next/image'
+'use client'
+
+import { useCallback, useEffect, useState } from 'react'
+import { Button, Stack, TextField, Typography } from '@mui/material'
+
 import styles from './page.module.css'
 
+import io from 'socket.io-client';
+
+const socket = io('http://localhost:3001', {
+  withCredentials: true,
+})
+
+const httpRegExp = /^http[s]?:\/\//
+
+type PageResult = {
+  url: string
+  timeStamp: string
+  links: Array<{
+    url: string
+    text: string
+  }>
+}
+
 export default function Home() {
+  const [urlInput, setUrlInput] = useState('')
+  const [urlInputError, setUrlInputError] = useState('')
+
+  const [records, setRecords] = useState<Array<PageResult>>([])
+
+  const startCrawling = useCallback(() => {
+    socket.emit('start_crawl', urlInput);
+  }, [urlInput])
+
+  useEffect(() => {
+    socket.on('start_crawl', (data) => {
+      setRecords((prevRecords) => [...prevRecords, data]);
+    });
+  }, []);
+
   return (
     <main className={styles.main}>
-      <div className={styles.description}>
-        <p>
-          Get started by editing&nbsp;
-          <code className={styles.code}>src/app/page.tsx</code>
-        </p>
-        <div>
-          <a
-            href="https://vercel.com?utm_source=create-next-app&utm_medium=appdir-template&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            By{' '}
-            <Image
-              src="/vercel.svg"
-              alt="Vercel Logo"
-              className={styles.vercelLogo}
-              width={100}
-              height={24}
-              priority
-            />
-          </a>
-        </div>
-      </div>
+      <Stack gap={4} width='80%'>
+        <TextField
+          type='text'
+          variant='outlined'
+          fullWidth
+          label='URL to scrap'
+          error={!!urlInputError}
+          helperText={urlInputError}
+          value={urlInput}
+          onChange={(event) => {
+            const inputText = event.target.value
 
-      <div className={styles.center}>
-        <Image
-          className={styles.logo}
-          src="/next.svg"
-          alt="Next.js Logo"
-          width={180}
-          height={37}
-          priority
+            if (!httpRegExp.test(inputText)) {
+              setUrlInputError('Invalid link, should be in format http(s)://[page_address]')
+            } else {
+              setUrlInputError('')
+            }
+            setUrlInput(event.target.value)
+          }}
         />
-      </div>
 
-      <div className={styles.grid}>
-        <a
-          href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template&utm_campaign=create-next-app"
-          className={styles.card}
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <h2>
-            Docs <span>-&gt;</span>
-          </h2>
-          <p>Find in-depth information about Next.js features and API.</p>
-        </a>
+        <Button
+          variant='outlined'
+          disabled={!!urlInputError}
+          onClick={startCrawling}
+        >Go</Button>
+      </Stack>
 
-        <a
-          href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template&utm_campaign=create-next-app"
-          className={styles.card}
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <h2>
-            Learn <span>-&gt;</span>
-          </h2>
-          <p>Learn about Next.js in an interactive course with&nbsp;quizzes!</p>
-        </a>
+      <Stack>
+        {records.map((record, index) => (
+          <Stack key={index}>
+            <Stack direction='row' gap={4}>
+              <Typography>{record.url}</Typography>
+              <Typography>{record.timeStamp}</Typography>
+              <Typography>{record.links.length}</Typography>
+            </Stack>
 
-        <a
-          href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template&utm_campaign=create-next-app"
-          className={styles.card}
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <h2>
-            Templates <span>-&gt;</span>
-          </h2>
-          <p>Explore starter templates for Next.js.</p>
-        </a>
-
-        <a
-          href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template&utm_campaign=create-next-app"
-          className={styles.card}
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <h2>
-            Deploy <span>-&gt;</span>
-          </h2>
-          <p>
-            Instantly deploy your Next.js site to a shareable URL with Vercel.
-          </p>
-        </a>
-      </div>
+            <Stack>
+              {record.links.map((link, linkIndex) => (
+                <Stack key={linkIndex} direction='row' gap={4}>
+                  <Typography>{link.url}</Typography>
+                  <Typography>{link.text}</Typography>
+                </Stack>
+              ))}
+            </Stack>
+          </Stack>
+        ))}
+      </Stack>
     </main>
   )
 }
