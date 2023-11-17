@@ -92,6 +92,7 @@ export default function Home() {
     setPaused(false)
     setUrlInput('')
     STORAGE.records = []
+    setRecords([])
   }, [])
 
   useEffect(() => {
