@@ -13,13 +13,17 @@ const io = new Server(server, {
   }
 })
 
+/** Number of fetch requests in parallel */
 const CONCURRENCY_LIMIT = 10
+/** Server status signal interval, in milliseconds */
+const STATUS_INTERVAL = 2000
 
 const httpRegExp = /^http[s]?:\/\//
 const slashAtEndRegExp = /\/$/
 const linkCleanupSymbolsRegExp = /[\?|\#]/
 
 const jsLinks = [
+  'javascript:/',
   'javascript:void(0);',
   'javascript:void(0)',
   'about:blank',
@@ -30,7 +34,17 @@ const LinksToExplore = new Set()
 const LinksQueue = new Set()
 
 let paused = false
-let stopped = false
+let stopped = true
+
+const currentState = () => {
+  if (stopped) {
+    return 'stopped'
+  } else if (paused) {
+    return 'paused'
+  } else {
+    return 'active'
+  }
+}
 
 let requestCounter = 0
 
@@ -42,12 +56,7 @@ const inspectURL = async (url) => {
     const res = await fetch(url)
     const html = await res.text()
 
-    console.warn('request made times: ' + requestCounter++)
-
-    if (!stopped) {
-      KnownLinks.add(url)
-      LinksQueue.delete(url)
-    }
+    console.log('request made times: ' + ++requestCounter)
 
     const dom = new JSDOM(html)
 
@@ -89,6 +98,8 @@ const inspectURL = async (url) => {
     }, [])
 
     if (!stopped) {
+      KnownLinks.add(url)
+      LinksQueue.delete(url)
       io.emit('send_record', {
         url: url,
         timeStamp: new Date().toISOString(),
@@ -104,15 +115,26 @@ const inspectURL = async (url) => {
 }
 
 const checkQueue = async () => {
-  console.warn('paused: ' + paused)
   if (LinksToExplore.size && LinksQueue.size < CONCURRENCY_LIMIT && !paused && !stopped) {
     const nextURL = LinksToExplore.values().next().value
     inspectURL(nextURL)
     checkQueue()
   } else if (!LinksToExplore.size) {
     console.log('Request queue is empty')
+    if (!LinksQueue.size) {
+      paused = true
+      stopped = true
+    }
   }
 }
+
+const pulse = setInterval(() => {
+  io.emit('status', {
+    state: currentState(),
+    urlsProcessed: KnownLinks.size,
+    urlsLeft: LinksQueue.size + LinksToExplore.size,
+  })
+}, STATUS_INTERVAL)
 
 io.on('connection', (socket) => {
   console.log('A user connected')
