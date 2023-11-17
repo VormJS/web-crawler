@@ -17,6 +17,8 @@ const io = new Server(server, {
 const CONCURRENCY_LIMIT = 10
 /** Server status signal interval, in milliseconds */
 const STATUS_INTERVAL = 2000
+/** Hide links without valid href*/
+const HIDE_JS_LINKS = true
 
 const httpRegExp = /^http[s]?:\/\//
 const slashAtEndRegExp = /\/$/
@@ -32,6 +34,7 @@ const jsLinks = [
 const KnownLinks = new Set()
 const LinksToExplore = new Set()
 const LinksQueue = new Set()
+const FailedLinks = new Set()
 
 let paused = false
 let stopped = true
@@ -47,64 +50,75 @@ const currentState = () => {
 }
 
 let requestCounter = 0
+let domain = ''
 
-const inspectURL = async (url) => {
+const parseURL = async (url) => {
   if (!KnownLinks.has(url)) {
     LinksQueue.add(url)
     LinksToExplore.delete(url)
 
-    const res = await fetch(url)
-    const html = await res.text()
+    try {
+      const res = await fetch(url)
+      const html = await res.text()
 
-    console.log('request made times: ' + ++requestCounter)
+      console.log('request made times: ' + ++requestCounter)
 
-    const dom = new JSDOM(html)
+      const dom = new JSDOM(html)
 
-    const document = dom.window.document
+      const document = dom.window.document
 
-    const links = document.querySelectorAll('a')
-    const linksData = [...links].reduce((list, link) => {
-      const linkAddress = link.href
+      const links = document.querySelectorAll('a')
+      const linksData = [...links].reduce((list, link) => {
+        const linkAddress = link.href
 
-      if (linkAddress) {
-        const indexOfCleaning = linkAddress.search(linkCleanupSymbolsRegExp)
-        const linkAddressClean = (indexOfCleaning === -1
-          ? linkAddress
-          : linkAddress.slice(0, indexOfCleaning)
-        ).replace(slashAtEndRegExp, '')
+        if (linkAddress) {
+          const indexOfCleaning = linkAddress.search(linkCleanupSymbolsRegExp)
+          const linkAddressClean = (indexOfCleaning === -1
+            ? linkAddress
+            : linkAddress.slice(0, indexOfCleaning)
+          ).replace(slashAtEndRegExp, '')
 
-        list.push({
-          url: linkAddressClean,
-          text: link.text,
-        })
+          if (!HIDE_JS_LINKS || !jsLinks.includes(linkAddressClean)) {
+            list.push({
+              url: linkAddressClean,
+              text: link.text,
+            })
+          }
 
-        if (!jsLinks.includes(linkAddressClean)) {
-          const linkWithOutDomain = !httpRegExp.test(linkAddressClean)
-          const fullLink = (linkWithOutDomain
-            ? url.split('/').slice(0, 3).join('/') + linkAddressClean
-            : linkAddressClean
-          )
-          if (
-            !KnownLinks.has(fullLink)
-            && !LinksToExplore.has(fullLink)
-            && !stopped
-          ) {
-            LinksToExplore.add(fullLink)
+          if (!jsLinks.includes(linkAddressClean)) {
+            const linkWithOutDomain = !httpRegExp.test(linkAddressClean)
+            const fullLink = (linkWithOutDomain
+              ? url.split('/').slice(0, 3).join('/') + linkAddressClean
+              : linkAddressClean
+            )
+            if (
+              !KnownLinks.has(fullLink)
+              && !FailedLinks.has(fullLink)
+              && !LinksToExplore.has(fullLink)
+              && !stopped
+              && fullLink.startsWith(domain)
+            ) {
+              LinksToExplore.add(fullLink)
+            }
           }
         }
+
+        return list
+      }, [])
+
+      if (!stopped) {
+        KnownLinks.add(url)
+        LinksQueue.delete(url)
+        io.emit('send_record', {
+          url: url,
+          timeStamp: new Date().toISOString(),
+          links: linksData,
+        })
       }
-
-      return list
-    }, [])
-
-    if (!stopped) {
-      KnownLinks.add(url)
+    } catch {
+      FailedLinks.add(url)
       LinksQueue.delete(url)
-      io.emit('send_record', {
-        url: url,
-        timeStamp: new Date().toISOString(),
-        links: linksData,
-      })
+      LinksToExplore.delete(url)
     }
   } else {
     LinksQueue.delete(url)
@@ -117,14 +131,15 @@ const inspectURL = async (url) => {
 const checkQueue = async () => {
   if (LinksToExplore.size && LinksQueue.size < CONCURRENCY_LIMIT && !paused && !stopped) {
     const nextURL = LinksToExplore.values().next().value
-    inspectURL(nextURL)
+    parseURL(nextURL)
     checkQueue()
-  } else if (!LinksToExplore.size) {
+  } else if (!LinksToExplore.size && !LinksQueue.size) {
     console.log('Request queue is empty')
-    if (!LinksQueue.size) {
-      paused = true
-      stopped = true
+    if (FailedLinks.size) {
+      console.log('Failed to load: ' + [...FailedLinks].join('\n'))
     }
+    paused = true
+    stopped = true
   }
 }
 
@@ -140,9 +155,10 @@ io.on('connection', (socket) => {
   console.log('A user connected')
 
   socket.on('start_crawl', async (message) => {
+    domain = message.split('/').slice(0, 3).join('/')
     stopped = false
     paused = false
-    inspectURL(message)
+    parseURL(message)
   })
 
   socket.on('pause', () => {
@@ -155,12 +171,14 @@ io.on('connection', (socket) => {
   })
 
   socket.on('stop', () => {
+    domain = ''
     requestCounter = 0
     stopped = true
     paused = true
     KnownLinks.clear()
     LinksToExplore.clear()
     LinksQueue.clear()
+    FailedLinks.clear()
   })
 
   socket.on('disconnect', () => {

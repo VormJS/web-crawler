@@ -101,9 +101,15 @@ export default function Home() {
     })
     socket.on('status', (data: ServerStatus) => {
       setServerStatus({
-        connected: true,
         ...data,
+        connected: true,
       })
+    })
+    socket.on('connect_error', () => {
+      setServerStatus(data => ({
+        ...data,
+        connected: false,
+      }))
     })
   }, [])
 
@@ -129,7 +135,7 @@ export default function Home() {
 
         {record.links.length ? (
           <CardContent>
-            <Table size='small'>
+            <Table size='small' sx={{ 'td': { wordBreak: 'break-word' } }}>
               <TableHead>
                 <TableRow>
                   <TableCell width={80}>Link #</TableCell>
@@ -164,7 +170,7 @@ export default function Home() {
                   type='text'
                   variant='outlined'
                   fullWidth
-                  label='URL to scrap'
+                  label='Enter URL'
                   error={!!urlInputError}
                   helperText={urlInputError}
                   disabled={searchInProgress}
@@ -184,6 +190,7 @@ export default function Home() {
                 {searchInProgress ? (
                   <Stack direction='row' gap={4}>
                     <Button
+                      disabled={serverStatus.state === 'stopped'}
                       variant='outlined'
                       fullWidth
                       onClick={pause}
@@ -199,7 +206,7 @@ export default function Home() {
                 ) : (
                   <Button
                     variant='outlined'
-                    disabled={!urlInput || !!urlInputError}
+                    disabled={!urlInput || !!urlInputError || !serverStatus.connected}
                     onClick={startCrawling}
                   >Go</Button>
                 )}
@@ -208,7 +215,7 @@ export default function Home() {
             <Grid item xs={12} sm={4}>
               <Stack alignItems='flex-end'>
                 <Typography variant='h6'>Server Status</Typography>
-                <Typography variant='subtitle2'>connected: {serverStatus.connected ? 'V' : 'X'}</Typography>
+                <Typography variant='subtitle2'>connected: {serverStatus.connected ? '✅' : '❌'}</Typography>
                 <Typography variant='subtitle2'>state: {serverStatus.state}</Typography>
                 <Typography variant='subtitle2'>urls processed: {serverStatus.urlsProcessed}</Typography>
                 <Typography variant='subtitle2'>urls left to explore: {serverStatus.urlsLeft}</Typography>
